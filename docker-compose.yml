@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  # 投研级前端大屏
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    networks:
+      - quant_net
+    restart: unless-stopped
+
+  # 高频数据强制对齐与归因引擎
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - TDENGINE_HOST=tdengine
+      - DOUBAO_API_KEY=${DOUBAO_API_KEY:-""}
+      - DOUBAO_ENDPOINT_ID=${DOUBAO_ENDPOINT_ID:-""}
+    depends_on:
+      - redis
+      # - tdengine # 取消注释以启用 TDengine
+    networks:
+      - quant_net
+    restart: unless-stopped
+
+  # 极速内存缓存与订阅发布总线 (消息队列模拟)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - quant_net
+    command: redis-server --save 60 1 --loglevel warning
+
+  # 工业级物联网时序数据库 (仅作架构占位演示，当前端点使用 historical_slice 回放)
+  # tdengine:
+  #   image: tdengine/tdengine:3.0.4.0
+  #   ports:
+  #     - "6030-6049:6030-6049"
+  #     - "6041:6041"
+  #   networks:
+  #     - quant_net
+
+networks:
+  quant_net:
+    driver: bridge
+
+volumes:
+  tdengine_data:
