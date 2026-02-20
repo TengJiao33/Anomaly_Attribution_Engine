@@ -1,0 +1,10 @@
+{
+  "case_id": "case_004_zhongxin_insider",
+  "symbol": "sh.601985",
+  "symbol_name": "中国核电",
+  "case_date": "2024-11-05",
+  "description": "中国核电盘中异常放量拉升，市场传闻重大核电项目获批在即",
+  "anomaly_type": "消息博弈-资金抢跑型",
+  "tick_count": 17,
+  "news_count": 5
+}

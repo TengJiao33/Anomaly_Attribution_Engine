@@ -1,0 +1,63 @@
+{
+  "summary": "【核心结论】监管里程碑事件引发'利好出尽'行情。21:03:10 SEC正式批准比特币现货ETF，BTC 1分钟内暴涨2800美元至49000（+6%），但随即上演经典的'Buy the rumor, sell the news'，15分钟内回吐全部涨幅并转跌。",
+  "nodes": [
+    {
+      "id": "比特币(BTC)",
+      "group": "stock"
+    },
+    {
+      "id": "SEC批准现货ETF",
+      "group": "policy"
+    },
+    {
+      "id": "SEC官方+Bloomberg",
+      "group": "source"
+    },
+    {
+      "id": "短线获利盘",
+      "group": "capital"
+    },
+    {
+      "id": "冲高回落",
+      "group": "action"
+    },
+    {
+      "id": "Buy the rumor, sell the news",
+      "group": "pattern"
+    }
+  ],
+  "links": [
+    {
+      "source": "SEC官方+Bloomberg",
+      "target": "SEC批准现货ETF",
+      "value": "监管里程碑正式确认"
+    },
+    {
+      "source": "SEC批准现货ETF",
+      "target": "比特币(BTC)",
+      "value": "长期利好但已被充分定价"
+    },
+    {
+      "source": "短线获利盘",
+      "target": "冲高回落",
+      "value": "消息兑现后集中获利了结"
+    },
+    {
+      "source": "冲高回落",
+      "target": "比特币(BTC)",
+      "value": "15分钟回吐全部涨幅"
+    },
+    {
+      "source": "Buy the rumor, sell the news",
+      "target": "冲高回落",
+      "value": "经典市场行为模式"
+    }
+  ],
+  "cot": [
+    "1. [预期积累]: 20:55 Bloomberg已传出审批完成消息，市场预期高度一致。",
+    "2. [事件确认]: 21:03:10 - SEC官方正式批准11只BTC现货ETF，靴子落地。",
+    "3. [脉冲式冲高]: 21:03:00-21:04:00 BTC从46350暴涨至49000，成交量放大40倍。",
+    "4. [利好出尽]: 21:04:30起短线获利盘集中抛售，价格快速回落。",
+    "5. [归因收敛]: 确定为『监管利好兑现→预期充分定价→短线获利了结→利好出尽回落』的经典预期差行情。"
+  ]
+}

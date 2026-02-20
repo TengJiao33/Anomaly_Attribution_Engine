@@ -1,0 +1,52 @@
+[
+  {
+    "case_id": "case_001_maotai_dividend",
+    "symbol": "sh.600519",
+    "symbol_name": "贵州茅台",
+    "case_date": "2024-03-25",
+    "description": "贵州茅台突发公告特别分红+提价，游资巨量抢筹导致股价30秒内拉升1.2%",
+    "anomaly_type": "公告利好-资金抢筹型",
+    "tick_count": 17,
+    "news_count": 7
+  },
+  {
+    "case_id": "case_002_catl_flash_crash",
+    "symbol": "sz.300750",
+    "symbol_name": "宁德时代",
+    "case_date": "2024-06-12",
+    "description": "宁德时代盘中突发闪崩，市场传闻海外客户大幅砍单叠加机构集中抛售",
+    "anomaly_type": "利空传闻-流动性挤兑型",
+    "tick_count": 17,
+    "news_count": 6
+  },
+  {
+    "case_id": "case_003_byd_policy",
+    "symbol": "sz.002594",
+    "symbol_name": "比亚迪",
+    "case_date": "2024-09-18",
+    "description": "国务院突发新能源汽车利好政策，比亚迪领涨新能源板块，盘中快速拉升涨停",
+    "anomaly_type": "政策驱动-板块联动型",
+    "tick_count": 17,
+    "news_count": 6
+  },
+  {
+    "case_id": "case_004_zhongxin_insider",
+    "symbol": "sh.601985",
+    "symbol_name": "中国核电",
+    "case_date": "2024-11-05",
+    "description": "中国核电盘中异常放量拉升，市场传闻重大核电项目获批在即",
+    "anomaly_type": "消息博弈-资金抢跑型",
+    "tick_count": 17,
+    "news_count": 5
+  },
+  {
+    "case_id": "case_005_btc_etf",
+    "symbol": "crypto.btc",
+    "symbol_name": "比特币",
+    "case_date": "2024-01-10",
+    "description": "SEC正式批准比特币现货ETF，BTC瞬间拉升后回落，上演典型的'Buy the rumor, sell the news'",
+    "anomaly_type": "监管事件-预期兑现型",
+    "tick_count": 17,
+    "news_count": 5
+  }
+]

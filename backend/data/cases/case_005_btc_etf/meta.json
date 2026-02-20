@@ -1,0 +1,10 @@
+{
+  "case_id": "case_005_btc_etf",
+  "symbol": "crypto.btc",
+  "symbol_name": "比特币",
+  "case_date": "2024-01-10",
+  "description": "SEC正式批准比特币现货ETF，BTC瞬间拉升后回落，上演典型的'Buy the rumor, sell the news'",
+  "anomaly_type": "监管事件-预期兑现型",
+  "tick_count": 17,
+  "news_count": 5
+}

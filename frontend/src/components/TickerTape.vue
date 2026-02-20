@@ -1,12 +1,12 @@
 <template>
   <div class="ticker-tape">
      <div class="ticker-prefix">
-         系统底座日志:
+         系统事件流:
      </div>
      <div class="ticker-view" ref="tickerContent">
          <div class="ticker-strip" :style="{ transform: `translateX(${scrollPos}px)` }">
-             <span v-for="(msg, i) in messages" :key="i" class="t-msg" :style="{ color: msg.color }">
-                 <span class="t-time">[{{ msg.time }}]</span> {{ msg.text }}
+             <span v-for="(msg, i) in displayMessages" :key="i" class="t-msg" :style="{ color: getColor(msg.type) }">
+                 <span class="t-time">[{{ msg.time }}]</span> {{ msg.message }}
              </span>
          </div>
      </div>
@@ -14,22 +14,40 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 
-const messages = ref([
-    { time: '初始化', text: '正在启动时序强制对齐引擎...', color: 'var(--text-dim)' },
-    { time: '链路 1', text: '接入本地大语言模型推理核心', color: 'var(--text-dim)' },
-    { time: '安全网', text: '市场噪音反制过滤：已激活', color: 'var(--up-color)' },
-    { time: '监听中', text: '等待盘口异动级联发酵', color: 'var(--warning-color)' },
-    { time: '状态', text: '系统全速在线', color: 'var(--up-color)' },
-])
+const props = defineProps<{
+  events: any[]
+}>()
 
 const scrollPos = ref(0)
 let animationId: number
 
+// 将后端事件转换为展示消息
+const displayMessages = computed(() => {
+    if (props.events.length === 0) {
+        return [
+            { time: '...', type: 'system', message: '等待系统事件...' }
+        ]
+    }
+    return props.events.slice(-15)  // 展示最近 15 条
+})
+
+const getColor = (type: string): string => {
+    const colorMap: Record<string, string> = {
+        'system': 'var(--text-dim)',
+        'replay': 'var(--accent-color)',
+        'anomaly': 'var(--down-color)',
+        'alignment': 'var(--up-color)',
+        'llm': '#58a6ff',
+    }
+    return colorMap[type] || 'var(--text-dim)'
+}
+
 const animate = () => {
-    scrollPos.value -= 1.5; 
-    if (scrollPos.value < -1000) scrollPos.value = 800; 
+    scrollPos.value -= 1.2; 
+    const totalWidth = displayMessages.value.length * 350
+    if (scrollPos.value < -totalWidth) scrollPos.value = 800; 
     animationId = requestAnimationFrame(animate)
 }
 
@@ -39,6 +57,11 @@ onMounted(() => {
 })
 
 onUnmounted(() => { cancelAnimationFrame(animationId) })
+
+// 当有新事件时重置滚动位置
+watch(() => props.events.length, () => {
+    scrollPos.value = 800
+})
 </script>
 
 <style scoped>
@@ -50,7 +73,7 @@ onUnmounted(() => { cancelAnimationFrame(animationId) })
     align-items: center;
     overflow: hidden;
     background-color: var(--panel-bg);
-    border-radius: 4px; /* 恢复一点护眼圆角 */
+    border-radius: 4px;
 }
 
 .ticker-prefix {
