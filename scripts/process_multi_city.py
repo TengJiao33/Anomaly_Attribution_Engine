@@ -128,20 +128,34 @@ def relation_to_multipolygon(relation, way_index, node_index):
 # ===========================================================================
 def process_city_buildings(city: str, raw_dir: Path, out_dir: Path) -> bool:
     """处理单个城市的建筑数据"""
-    # 深圳使用原有文件名
+    # 按优先级查找原始文件 (根目录 > 子目录)
     if city == "shenzhen":
-        input_file = raw_dir / "shenzhen_nanshan_buildings_raw.json"
+        candidates = [
+            raw_dir / "shenzhen_nanshan_buildings_raw.json",
+            raw_dir / "shenzhen" / "shenzhen_nanshan_buildings_raw.json",
+        ]
     else:
-        input_file = raw_dir / f"{city}_buildings_raw.json"
+        candidates = [
+            raw_dir / f"{city}_buildings_raw.json",
+            raw_dir / city / f"{city}_buildings_raw.json",
+        ]
+    input_file = None
+    for c in candidates:
+        if c.exists():
+            input_file = c
+            break
+    if input_file is None:
+        input_file = candidates[0]  # 用于错误提示
 
     if not input_file.exists():
         logger.warning(f"  ⚠️  建筑原始数据不存在: {input_file.name}")
         return False
 
     output_file = out_dir / "buildings_3d.geojson"
-    if output_file.exists() and os.path.getsize(output_file) > 1000:
-        logger.info(f"  ✅ 建筑 GeoJSON 已存在: {output_file.name}")
-        return True
+    # 可通过命令行 --force 参数控制是否跳过
+    # if output_file.exists() and os.path.getsize(output_file) > 1000:
+    #     logger.info(f"  ✅ 建筑 GeoJSON 已存在: {output_file.name}")
+    #     return True
 
     logger.info(f"  🔄 处理建筑数据: {input_file.name}")
 
@@ -223,11 +237,24 @@ def process_city_pois(city: str, raw_dir: Path, out_dir: Path) -> bool:
     all_ok = True
 
     for poi_type in ["sensitive", "demand"]:
-        # 深圳使用原有文件名
+        # 按优先级查找原始文件 (根目录 > 子目录)
         if city == "shenzhen":
-            input_file = raw_dir / f"poi_{poi_type}_raw.json"
+            candidates = [
+                raw_dir / f"poi_{poi_type}_raw.json",
+                raw_dir / "shenzhen" / f"poi_{poi_type}_raw.json",
+            ]
         else:
-            input_file = raw_dir / f"{city}_poi_{poi_type}_raw.json"
+            candidates = [
+                raw_dir / f"{city}_poi_{poi_type}_raw.json",
+                raw_dir / city / f"{city}_poi_{poi_type}_raw.json",
+            ]
+        input_file = None
+        for c in candidates:
+            if c.exists():
+                input_file = c
+                break
+        if input_file is None:
+            input_file = candidates[0]  # 用于错误提示
 
         output_file = out_dir / f"poi_{poi_type}.geojson"
 
@@ -236,9 +263,10 @@ def process_city_pois(city: str, raw_dir: Path, out_dir: Path) -> bool:
             all_ok = False
             continue
 
-        if output_file.exists() and os.path.getsize(output_file) > 100:
-            logger.info(f"  ✅ {poi_type} POI GeoJSON 已存在: {output_file.name}")
-            continue
+        # 可通过命令行 --force 参数控制是否跳过
+        # if output_file.exists() and os.path.getsize(output_file) > 100:
+        #     logger.info(f"  ✅ {poi_type} POI GeoJSON 已存在: {output_file.name}")
+        #     continue
 
         logger.info(f"  🔄 处理 {poi_type} POI: {input_file.name}")
 
@@ -316,6 +344,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="多城市数据批量处理")
     parser.add_argument("--cities", type=str, default="all",
                         help="处理的城市, 逗号分隔或'all'")
+    parser.add_argument("--force", action="store_true", default=False,
+                        help="强制重新处理, 覆盖已有文件")
     args = parser.parse_args()
 
     base = Path(__file__).resolve().parent.parent

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import DeckGL from '@deck.gl/react';
-import { GeoJsonLayer } from '@deck.gl/layers';
+import { GeoJsonLayer, ColumnLayer } from '@deck.gl/layers';
 import { TripsLayer } from '@deck.gl/geo-layers';
 import { Map, type MapRef } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -10,7 +10,8 @@ const INITIAL_VIEW_STATE = {
     latitude: 22.535,
     zoom: 13,
     pitch: 50,
-    bearing: 15
+    bearing: 15,
+    maxPitch: 85 // 允许像常规地图一样更自由的俯仰角
 };
 
 const CITY_COORDS: Record<string, { longitude: number, latitude: number, zoom: number }> = {
@@ -29,7 +30,6 @@ interface UAVPath {
     timestamps: number[];
 }
 
-// 预处理JSON的数据结构
 interface PreprocessedData {
     timeRange: { min: number; max: number };
     totalFlights: number;
@@ -58,48 +58,50 @@ export default function MapContainer() {
     const [currentCity, setCurrentCity] = useState("shenzhen");
     const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
 
-    // 加载数据
+    // 一次性加载所有城市数据
     useEffect(() => {
-        // 构建不同城市的数据路径
-        const basePath = `/data/processed/${currentCity}`;
+        const loadAllData = async () => {
+            const allBuildings: any[] = [];
+            const allPoiDemand: any[] = [];
+            const allPoiSensitive: any[] = [];
 
-        // 重置数据，展现加载状态
-        setBuildingsData(null);
-        setPoiDemand(null);
-        setPoiSensitive(null);
+            await Promise.all(Object.keys(CITY_COORDS).map(async (city) => {
+                const basePath = `/data/processed/${city}`;
+                try {
+                    const [bRes, pDRes, pSRes] = await Promise.all([
+                        fetch(`${basePath}/buildings_3d.geojson`).then(r => r.ok ? r.json() : null),
+                        fetch(`${basePath}/poi_demand.geojson`).then(r => r.ok ? r.json() : null),
+                        fetch(`${basePath}/poi_sensitive.geojson`).then(r => r.ok ? r.json() : null)
+                    ]);
+                    if (bRes && bRes.features) allBuildings.push(...bRes.features);
+                    if (pDRes && pDRes.features) allPoiDemand.push(...pDRes.features);
+                    if (pSRes && pSRes.features) allPoiSensitive.push(...pSRes.features);
+                } catch (e) {
+                    console.error(`Failed to load data for ${city}`, e);
+                }
+            }));
 
-        fetch(`${basePath}/buildings_3d.geojson`).then(res => res.ok ? res.json() : null).then(setBuildingsData);
-        fetch(`${basePath}/poi_demand.geojson`).then(res => res.ok ? res.json() : null).then(setPoiDemand);
-        fetch(`${basePath}/poi_sensitive.geojson`).then(res => res.ok ? res.json() : null).then(setPoiSensitive);
+            // 合并为大 FeatureCollection
+            setBuildingsData({ type: 'FeatureCollection', features: allBuildings });
+            setPoiDemand({ type: 'FeatureCollection', features: allPoiDemand });
+            setPoiSensitive({ type: 'FeatureCollection', features: allPoiSensitive });
 
-        // 如果是深圳，加载轨迹数据
-        if (currentCity === "shenzhen") {
-            fetch('/data/processed/trajectories/uav_trajectories.json')
-                .then(res => res.json())
-                .then((data: PreprocessedData) => {
+            // 加载深圳轨迹数据
+            try {
+                const tRes = await fetch('/data/processed/trajectories/uav_trajectories.json');
+                if (tRes.ok) {
+                    const data: PreprocessedData = await tRes.json();
                     timeRangeRef.current = data.timeRange;
                     setTrajectories(data.trajectories);
                     setCurrentTime(0);
-                    console.log(`✅ ${currentCity} 轨迹加载完成: ${data.sampledFlights}/${data.totalFlights} 条 (确定性采样)`);
-                }).catch(() => {
-                    setTrajectories([]);
-                    timeRangeRef.current = { min: 0, max: 0 };
-                });
-        } else {
-            setTrajectories([]);
-            timeRangeRef.current = { min: 0, max: 0 };
-        }
+                }
+            } catch (e) {
+                console.error("Failed to load trajectories", e);
+            }
+        };
 
-        // 更新视图中心
-        if (CITY_COORDS[currentCity]) {
-            setViewState(prev => ({
-                ...prev,
-                longitude: CITY_COORDS[currentCity].longitude,
-                latitude: CITY_COORDS[currentCity].latitude,
-            }));
-        }
-
-    }, [currentCity]);
+        loadAllData();
+    }, []);
 
     // 动画循环
     const animate = useCallback(() => {
@@ -130,6 +132,19 @@ export default function MapContainer() {
     // 进度百分比
     const progress = timeRangeRef.current.max > 0 ? (currentTime / timeRangeRef.current.max) * 100 : 0;
 
+    // 城市切换处理
+    const handleCityJump = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const city = e.target.value;
+        setCurrentCity(city);
+        if (CITY_COORDS[city]) {
+            setViewState(prev => ({
+                ...prev,
+                longitude: CITY_COORDS[city].longitude,
+                latitude: CITY_COORDS[city].latitude,
+            }));
+        }
+    };
+
     // 底图加载后修改水体和绿地颜色
     const handleMapLoad = useCallback(() => {
         const map = mapRef.current?.getMap();
@@ -157,45 +172,71 @@ export default function MapContainer() {
     }, []);
 
     const layers: any[] = [
-
-        // 3D建筑层 - 暖灰色搭配白色底图
+        // 3D建筑层 - 增强层次感：展示描边避免模糊
         new GeoJsonLayer({
             id: 'buildings-layer',
             data: buildingsData,
             extruded: true,
-            getFillColor: [160, 170, 185, 230],       // 冷灰蓝色
-            getLineColor: [120, 135, 155, 180],       // 边缘线
+            filled: true,
+            stroked: true,
+            wireframe: true, // 开启线框，勾勒3D建筑物边缘，使密集建筑层次更分明
+            getFillColor: [170, 180, 195, 230],       // 冷灰蓝色
+            getLineColor: [80, 90, 110, 200],         // 较深描边增强轮廓感
+            getLineWidth: 1,
             lineWidthMinPixels: 1,
             getElevation: ((d: any) => d.properties.height || 20) as any,
             pickable: true,
             autoHighlight: true,
             highlightColor: [80, 140, 220, 255],
+            material: {
+                ambient: 0.4,
+                diffuse: 0.6,
+                shininess: 32,
+                specularColor: [220, 230, 240],
+            },
         }),
 
-        // POI需求点 - 翡翠绿能量柱
+        // POI需求点 - 柔绿圆盘（不再刺眼，样式更统一内敛）
         new GeoJsonLayer({
             id: 'poi-demand-layer',
             data: poiDemand,
-            extruded: true,
-            getElevation: 50,
+            stroked: true,
+            filled: true,
+            lineWidthMinPixels: 1,
+            getPointRadius: 25,
             pointRadiusMinPixels: 4,
-            pointRadiusMaxPixels: 20,
-            getPointRadius: 30,
-            getFillColor: [16, 185, 129, 200],
+            pointRadiusMaxPixels: 16,
+            getFillColor: [52, 211, 153, 160],  // 柔和的浅翡翠绿，带透明感
+            getLineColor: [5, 150, 105, 220],   // 翠绿色描边增强边缘
             pickable: true,
         }),
 
-        // POI敏感区 - 暴击红禁飞柱
+        // POI敏感区 - 面状禁飞区（如南山区原有的Polygon类型区域，展示为带高度区域块）
         new GeoJsonLayer({
-            id: 'poi-sensitive-layer',
+            id: 'poi-sensitive-poly-layer',
             data: poiSensitive,
             extruded: true,
             getElevation: 80,
-            pointRadiusMinPixels: 4,
-            pointRadiusMaxPixels: 20,
-            getPointRadius: 40,
-            getFillColor: [225, 29, 72, 200],
+            getPointRadius: 0, // 隐蔽当前图层对Point的处理，点统一交由下方的ColumnLayer渲染为带高度的圆柱
+            getFillColor: [239, 68, 68, 160], // 柔和化刺眼的鲜红
+            getLineColor: [185, 28, 28, 200],
+            wireframe: true,
             pickable: true,
+        }),
+
+        // POI敏感区 - 点状禁飞柱（将其他城市原为Point的数据强制转为相同表现的圆柱体）
+        new ColumnLayer({
+            id: 'poi-sensitive-point-layer',
+            data: poiSensitive?.features?.filter((f: any) => f.geometry.type === 'Point') || [],
+            diskResolution: 24,
+            radius: 35,
+            extruded: true,
+            pickable: true,
+            elevationScale: 1,
+            getPosition: (d: any) => d.geometry.coordinates,
+            getFillColor: [239, 68, 68, 160], // 对应面状的柔和红
+            getLineColor: [185, 28, 28, 200],
+            getElevation: 80,
         }),
 
         // 🔥 核心升级：TripsLayer 动态金黄拖尾轨迹
@@ -217,11 +258,18 @@ export default function MapContainer() {
         <div className="absolute inset-0 z-0" style={{ background: '#f0f0f0' }}>
             <DeckGL
                 initialViewState={viewState}
-                controller={true}
+                controller={{
+                    doubleClickZoom: true,
+                    touchRotate: true,
+                    dragRotate: true, // 开启拖拽旋转，支持360度旋转和俯仰
+                    scrollZoom: true,
+                    dragPan: true,
+                    keyboard: true
+                }}
                 layers={layers}
                 onViewStateChange={({ viewState }) => {
                     const { longitude, latitude, zoom, pitch, bearing } = viewState as any;
-                    setViewState({ longitude, latitude, zoom, pitch, bearing });
+                    setViewState({ longitude, latitude, zoom, pitch, bearing, maxPitch: INITIAL_VIEW_STATE.maxPitch });
                 }}
             >
                 <Map
@@ -229,8 +277,14 @@ export default function MapContainer() {
                     mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
                     reuseMaps
                     onLoad={handleMapLoad}
+                    maxPitch={INITIAL_VIEW_STATE.maxPitch}
                 />
             </DeckGL>
+
+            {/* 视角控制提示 */}
+            <div className="absolute top-4 left-4 bg-white/80 backdrop-blur text-slate-700 text-xs px-3 py-1.5 rounded-lg shadow border border-slate-200 z-10 pointer-events-none">
+                💡 提示：按住 <span className="font-semibold text-cyan-600">右键</span> 或 <span className="font-semibold text-cyan-600">Ctrl+左键</span> 拖动可360°旋转/调整视角
+            </div>
 
             {/* 底部动画控制条 */}
             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
@@ -292,12 +346,12 @@ export default function MapContainer() {
                         ))}
                     </div>
 
-                    {/* 城市切换 */}
+                    {/* 城市快速跳转 (仅跳转视角) */}
                     <div className="flex items-center gap-2 ml-4 border-l border-slate-700/60 pl-4">
                         <select
                             value={currentCity}
-                            onChange={(e) => setCurrentCity(e.target.value)}
-                            className="bg-slate-800 text-cyan-300 text-sm rounded border border-slate-600 px-2 py-1 outline-none"
+                            onChange={handleCityJump}
+                            className="bg-slate-800 text-cyan-300 text-sm rounded border border-slate-600 px-2 py-1 outline-none cursor-pointer"
                         >
                             <option value="shenzhen">深圳南山</option>
                             <option value="beijing">北京核心</option>
