@@ -2,6 +2,8 @@
 
 **当前状态**：第一阶段原始数据募集与 Python 预处理**已全部竣工验收**。所有前端页面目前直接从 `data/processed/` 加载格式化好的可用数据。
 
+**覆盖城市**：深圳南山、北京核心（朝阳+海淀+西城）、上海核心（浦东+静安+黄浦）、广州核心（天河+越秀+海珠）、成都核心（锦江+武侯+高新）、重庆主城（渝中+南岸+江北+沙坪坝）
+
 ---
 
 ## 1. 无人机轨迹数据集 (UAV Trajectories)
@@ -60,3 +62,30 @@
 | `type` | String | 类别 (如 `hospital`, `school`, `office`, `residential`)。 |
 | `weight` | Float | 权重值 (例如：禁飞权重或物流吞吐量权重)。 |
 | `geometry` | Point | 真实的经纬度坐标点。 |
+
+---
+
+## 4. 真实无人机飞行能耗数据集 (AirLab Flight Energy)
+
+来自卡内基梅隆大学 AirLab 的 DJI Matrice 100 真实飞行实验数据，共 188 次飞行。
+
+**来源**: CMU AirLab — [DOI: 10.1184/R1/12683453](https://doi.org/10.1184/R1/12683453)  
+**设备**: DJI Matrice 100 (工业级四旋翼)  
+**存储位置**: `data/raw/airlab_energy/data/{flight_number}/processed.csv`  
+**实验参数**: 载荷 0g/250g/500g，高度 25-100m，速度 4-12 m/s  
+**采样率**: 10 Hz
+
+| 字段名 (Field Name) | 数据类型 (Type) | 单位 (Unit) | 描述 (Description) |
+| :--- | :--- | :--- | :--- |
+| `time` | Float | Seconds (s) | 飞行时间戳 |
+| `airspeed` | Float | m/s | 空速 (相对于空气的速度) |
+| `vertspd` | Float | m/s | 垂直速度 |
+| `psi` | Float | Radians | 风向角 (NED 坐标系) |
+| `aoa` | Float | Radians | 攻角 (angle of attack) |
+| `theta` | Float | Radians | 俯仰角 |
+| `diffalt` | Float | Meters (m) | 相对起飞点高度差 |
+| `density` | Float | kg/m³ | 当时空气密度 (由METAR气象站实测) |
+| `payload` | Float | kg | 载荷重量 (0 / 0.25 / 0.5) |
+| `power` | Float | Watts (W) | 瞬时功率 (= 电压 × 电流) |
+| `airspeed_x` | Float | m/s | 空速 X 分量 |
+| `airspeed_y` | Float | m/s | 空速 Y 分量 |
