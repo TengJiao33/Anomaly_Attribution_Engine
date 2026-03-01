@@ -65,27 +65,58 @@
 
 ---
 
-## 4. 真实无人机飞行能耗数据集 (AirLab Flight Energy)
+## 4. 真实无人机飞行能耗数据集 (AirLab Flight Energy) ✅
 
-来自卡内基梅隆大学 AirLab 的 DJI Matrice 100 真实飞行实验数据，共 188 次飞行。
+来自卡内基梅隆大学 AirLab 的 DJI Matrice 100 真实飞行实验数据，共 187 次有效飞行。
 
 **来源**: CMU AirLab — [DOI: 10.1184/R1/12683453](https://doi.org/10.1184/R1/12683453)  
 **设备**: DJI Matrice 100 (工业级四旋翼)  
-**存储位置**: `data/raw/airlab_energy/data/{flight_number}/processed.csv`  
+**原始位置**: `data/raw/airlab_energy/data/{flight_number}/processed.csv`  
+**清洗位置**: `data/processed/airlab_energy/`  
 **实验参数**: 载荷 0g/250g/500g，高度 25-100m，速度 4-12 m/s  
-**采样率**: 10 Hz
+**采样率**: ~7-10 Hz
 
-| 字段名 (Field Name) | 数据类型 (Type) | 单位 (Unit) | 描述 (Description) |
+### 4.1 飞行汇总 (flights_summary.csv)
+
+每次飞行的统计摘要，共 187 行。
+
+| 字段名 | 类型 | 单位 | 描述 |
 | :--- | :--- | :--- | :--- |
-| `time` | Float | Seconds (s) | 飞行时间戳 |
-| `airspeed` | Float | m/s | 空速 (相对于空气的速度) |
+| `flight_id` | String | - | 唯一标识 (AIRLAB_XXXX) |
+| `flight_number` | Int | - | 原始飞行编号 |
+| `route` | String | - | 航线编号 |
+| `aircraft` | String | - | 飞行器型号 |
+| `date` | String | - | 飞行日期 |
+| `payload_kg` | Float | kg | 载荷重量 |
+| `duration_s` | Float | s | 飞行时长 |
+| `max_altitude_m` | Float | m | 最大相对高度 |
+| `avg_airspeed_ms` | Float | m/s | 平均空速 |
+| `max_airspeed_ms` | Float | m/s | 最大空速 |
+| `avg_power_w` | Float | W | 平均功率 |
+| `max_power_w` | Float | W | 最大功率 |
+| `min_power_w` | Float | W | 最小功率 |
+| `total_energy_wh` | Float | Wh | 累计能耗 (梯形积分) |
+| `energy_per_second_wh` | Float | Wh/s | 秒均能耗 |
+| `avg_density` | Float | kg/m³ | 平均空气密度 |
+| `sample_count` | Int | - | 采样点数 |
+| `sample_rate_hz` | Float | Hz | 实际采样率 |
+
+### 4.2 飞行明细 (flights_detail.csv)
+
+全部时序数据合并，共 162,933 行。
+
+| 字段名 | 类型 | 单位 | 描述 |
+| :--- | :--- | :--- | :--- |
+| `flight_id` | String | - | 关联 flight_id |
+| `time` | Float | s | 飞行时间戳 |
+| `airspeed` | Float | m/s | 空速 |
 | `vertspd` | Float | m/s | 垂直速度 |
-| `psi` | Float | Radians | 风向角 (NED 坐标系) |
-| `aoa` | Float | Radians | 攻角 (angle of attack) |
-| `theta` | Float | Radians | 俯仰角 |
-| `diffalt` | Float | Meters (m) | 相对起飞点高度差 |
-| `density` | Float | kg/m³ | 当时空气密度 (由METAR气象站实测) |
-| `payload` | Float | kg | 载荷重量 (0 / 0.25 / 0.5) |
-| `power` | Float | Watts (W) | 瞬时功率 (= 电压 × 电流) |
+| `diffalt` | Float | m | 相对起飞点高度差 |
+| `payload` | Float | kg | 载荷重量 |
+| `power` | Float | W | 瞬时功率 |
+| `density` | Float | kg/m³ | 空气密度 |
 | `airspeed_x` | Float | m/s | 空速 X 分量 |
 | `airspeed_y` | Float | m/s | 空速 Y 分量 |
+| `psi` | Float | rad | 风向角 |
+| `aoa` | Float | rad | 攻角 |
+| `theta` | Float | rad | 俯仰角 |

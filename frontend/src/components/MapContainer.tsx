@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import DeckGL from '@deck.gl/react';
 import { GeoJsonLayer, ColumnLayer } from '@deck.gl/layers';
 import { TripsLayer } from '@deck.gl/geo-layers';
-import { Map, type MapRef } from 'react-map-gl/maplibre';
+import { Map as MapGL, type MapRef } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 const INITIAL_VIEW_STATE = {
@@ -37,85 +37,141 @@ interface PreprocessedData {
     trajectories: UAVPath[];
 }
 
+// 城市数据缓存类型
+interface CityData {
+    buildings: any;
+    poiDemand: any;
+    poiSensitive: any;
+}
+
 // 动画配置
 const ANIMATION_SPEED = 60; // 每帧推进60秒（数据覆盖3.5天）
 const TRAIL_LENGTH = 1200;  // 拖尾长度（秒），越长拖尾越明显
 
 export default function MapContainer() {
+    // ====== 策略一：按需加载 + 缓存 ======
+    // 只存储当前城市的数据，不再一次性加载全部
     const [buildingsData, setBuildingsData] = useState<any>(null);
     const [poiDemand, setPoiDemand] = useState<any>(null);
     const [poiSensitive, setPoiSensitive] = useState<any>(null);
     const [trajectories, setTrajectories] = useState<UAVPath[]>([]);
+    const [isLoadingCity, setIsLoadingCity] = useState(false);
 
-    // 动画状态
-    const [currentTime, setCurrentTime] = useState(0);
+    // 城市数据缓存：切换回已访问城市时直接复用，避免重复 fetch
+    const dataCacheRef = useRef<Map<string, CityData>>(new Map());
+
+    // ====== 策略二：动画驱动优化 ======
+    // currentTime 用 ref 存储，不触发 React 重渲染
+    const currentTimeRef = useRef(0);
     const [isPlaying, setIsPlaying] = useState(true);
     const [animationSpeed, setAnimationSpeed] = useState(1);
     const timeRangeRef = useRef({ min: 0, max: 0 });
     const animFrameRef = useRef<number>(0);
     const mapRef = useRef<MapRef>(null);
+    // DeckGL 实例 ref，用于直接更新 layer props
+    const deckRef = useRef<any>(null);
+    // 进度条 DOM ref，用于直接操作 DOM 避免重渲染
+    const progressBarRef = useRef<HTMLDivElement>(null);
+    const progressTextRef = useRef<HTMLSpanElement>(null);
 
     const [currentCity, setCurrentCity] = useState("shenzhen");
     const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
 
-    // 一次性加载所有城市数据
+    // 加载单个城市数据（带缓存）
+    const loadCityData = useCallback(async (city: string) => {
+        // 检查缓存
+        const cached = dataCacheRef.current.get(city);
+        if (cached) {
+            setBuildingsData(cached.buildings);
+            setPoiDemand(cached.poiDemand);
+            setPoiSensitive(cached.poiSensitive);
+            return;
+        }
+
+        setIsLoadingCity(true);
+        const basePath = `/data/processed/${city}`;
+        try {
+            const [bRes, pDRes, pSRes] = await Promise.all([
+                fetch(`${basePath}/buildings_3d.geojson`).then(r => r.ok ? r.json() : null),
+                fetch(`${basePath}/poi_demand.geojson`).then(r => r.ok ? r.json() : null),
+                fetch(`${basePath}/poi_sensitive.geojson`).then(r => r.ok ? r.json() : null)
+            ]);
+
+            const cityData: CityData = {
+                buildings: bRes,
+                poiDemand: pDRes,
+                poiSensitive: pSRes
+            };
+
+            // 存入缓存
+            dataCacheRef.current.set(city, cityData);
+
+            setBuildingsData(cityData.buildings);
+            setPoiDemand(cityData.poiDemand);
+            setPoiSensitive(cityData.poiSensitive);
+        } catch (e) {
+            console.error(`加载城市 ${city} 数据失败`, e);
+        } finally {
+            setIsLoadingCity(false);
+        }
+    }, []);
+
+    // 初始加载：只加载默认城市 + 轨迹数据
     useEffect(() => {
-        const loadAllData = async () => {
-            const allBuildings: any[] = [];
-            const allPoiDemand: any[] = [];
-            const allPoiSensitive: any[] = [];
+        // 加载初始城市
+        loadCityData("shenzhen");
 
-            await Promise.all(Object.keys(CITY_COORDS).map(async (city) => {
-                const basePath = `/data/processed/${city}`;
-                try {
-                    const [bRes, pDRes, pSRes] = await Promise.all([
-                        fetch(`${basePath}/buildings_3d.geojson`).then(r => r.ok ? r.json() : null),
-                        fetch(`${basePath}/poi_demand.geojson`).then(r => r.ok ? r.json() : null),
-                        fetch(`${basePath}/poi_sensitive.geojson`).then(r => r.ok ? r.json() : null)
-                    ]);
-                    if (bRes && bRes.features) allBuildings.push(...bRes.features);
-                    if (pDRes && pDRes.features) allPoiDemand.push(...pDRes.features);
-                    if (pSRes && pSRes.features) allPoiSensitive.push(...pSRes.features);
-                } catch (e) {
-                    console.error(`Failed to load data for ${city}`, e);
-                }
-            }));
-
-            // 合并为大 FeatureCollection
-            setBuildingsData({ type: 'FeatureCollection', features: allBuildings });
-            setPoiDemand({ type: 'FeatureCollection', features: allPoiDemand });
-            setPoiSensitive({ type: 'FeatureCollection', features: allPoiSensitive });
-
-            // 加载深圳轨迹数据
+        // 加载轨迹数据
+        (async () => {
             try {
                 const tRes = await fetch('/data/processed/trajectories/uav_trajectories.json');
                 if (tRes.ok) {
                     const data: PreprocessedData = await tRes.json();
                     timeRangeRef.current = data.timeRange;
                     setTrajectories(data.trajectories);
-                    setCurrentTime(0);
+                    currentTimeRef.current = 0;
                 }
             } catch (e) {
-                console.error("Failed to load trajectories", e);
+                console.error("加载轨迹数据失败", e);
             }
-        };
+        })();
+    }, [loadCityData]);
 
-        loadAllData();
-    }, []);
-
-    // 动画循环
+    // ====== 动画循环：完全绕过 React 渲染管线 ======
     const animate = useCallback(() => {
         if (timeRangeRef.current.max === 0) {
             animFrameRef.current = requestAnimationFrame(animate);
             return;
         }
 
-        setCurrentTime(prev => {
-            const next = prev + ANIMATION_SPEED * animationSpeed;
-            // 循环播放
-            if (next > timeRangeRef.current.max) return 0;
-            return next;
-        });
+        // 直接更新 ref，不触发 setState
+        let next = currentTimeRef.current + ANIMATION_SPEED * animationSpeed;
+        if (next > timeRangeRef.current.max) next = 0;
+        currentTimeRef.current = next;
+
+        // 直接通过 DeckGL 实例更新 TripsLayer 的 currentTime
+        // 这完全跳过 React reconciliation，性能极高
+        const deck = deckRef.current?.deck;
+        if (deck) {
+            const currentLayers = deck.props.layers;
+            const updatedLayers = currentLayers.map((layer: any) => {
+                if (layer?.id === 'uav-trips-layer') {
+                    return layer.clone({ currentTime: next });
+                }
+                return layer;
+            });
+            deck.setProps({ layers: updatedLayers });
+        }
+
+        // 直接操作 DOM 更新进度条，不触发 React 重渲染
+        const progress = timeRangeRef.current.max > 0
+            ? (next / timeRangeRef.current.max) * 100 : 0;
+        if (progressBarRef.current) {
+            progressBarRef.current.style.width = `${progress}%`;
+        }
+        if (progressTextRef.current) {
+            progressTextRef.current.textContent = formatElapsed(next);
+        }
 
         animFrameRef.current = requestAnimationFrame(animate);
     }, [animationSpeed]);
@@ -129,11 +185,8 @@ export default function MapContainer() {
         };
     }, [isPlaying, animate]);
 
-    // 进度百分比
-    const progress = timeRangeRef.current.max > 0 ? (currentTime / timeRangeRef.current.max) * 100 : 0;
-
-    // 城市切换处理
-    const handleCityJump = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    // 城市切换处理：切换视角 + 按需加载数据
+    const handleCityJump = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
         const city = e.target.value;
         setCurrentCity(city);
         if (CITY_COORDS[city]) {
@@ -143,7 +196,9 @@ export default function MapContainer() {
                 latitude: CITY_COORDS[city].latitude,
             }));
         }
-    };
+        // 按需加载目标城市数据
+        loadCityData(city);
+    }, [loadCityData]);
 
     // 底图加载后修改水体和绿地颜色
     const handleMapLoad = useCallback(() => {
@@ -171,7 +226,15 @@ export default function MapContainer() {
         }
     }, []);
 
-    const layers: any[] = [
+    // ====== 策略三：Layer 对象稳定化 ======
+    // ColumnLayer filter 结果缓存
+    const sensitivePoints = useMemo(() =>
+        poiSensitive?.features?.filter((f: any) => f.geometry.type === 'Point') || [],
+        [poiSensitive]
+    );
+
+    // 静态 Layer（buildings + POI）用 useMemo 缓存，只在数据变化时重建
+    const staticLayers = useMemo(() => [
         // 3D建筑层 - 增强层次感：展示描边避免模糊
         new GeoJsonLayer({
             id: 'buildings-layer',
@@ -227,7 +290,7 @@ export default function MapContainer() {
         // POI敏感区 - 点状禁飞柱（将其他城市原为Point的数据强制转为相同表现的圆柱体）
         new ColumnLayer({
             id: 'poi-sensitive-point-layer',
-            data: poiSensitive?.features?.filter((f: any) => f.geometry.type === 'Point') || [],
+            data: sensitivePoints,
             diskResolution: 24,
             radius: 35,
             extruded: true,
@@ -238,8 +301,10 @@ export default function MapContainer() {
             getLineColor: [185, 28, 28, 200],
             getElevation: 80,
         }),
+    ], [buildingsData, poiDemand, poiSensitive, sensitivePoints]);
 
-        // 🔥 核心升级：TripsLayer 动态金黄拖尾轨迹
+    // TripsLayer 独立 memo，初始 currentTime 为 0，后续通过 deck.setProps 更新
+    const tripsLayer = useMemo(() =>
         new TripsLayer({
             id: 'uav-trips-layer',
             data: trajectories,
@@ -248,15 +313,45 @@ export default function MapContainer() {
             getColor: [255, 180, 0],        // 金黄色
             widthMinPixels: 2.5,
             trailLength: TRAIL_LENGTH,
-            currentTime: currentTime,
+            currentTime: currentTimeRef.current,
             shadowEnabled: false,
             opacity: 0.9,
         }),
-    ].filter(Boolean);
+        [trajectories]
+    );
+
+    // 合并所有 layers
+    const layers = useMemo(() =>
+        [...staticLayers, tripsLayer].filter(Boolean),
+        [staticLayers, tripsLayer]
+    );
+
+    // ViewState 回调稳定化
+    const handleViewStateChange = useCallback(({ viewState }: any) => {
+        const { longitude, latitude, zoom, pitch, bearing } = viewState;
+        setViewState({ longitude, latitude, zoom, pitch, bearing, maxPitch: INITIAL_VIEW_STATE.maxPitch });
+    }, []);
+
+    // 进度条点击处理
+    const handleProgressClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const pct = (e.clientX - rect.left) / rect.width;
+        currentTimeRef.current = pct * timeRangeRef.current.max;
+
+        // 立即更新 DOM
+        const progress = pct * 100;
+        if (progressBarRef.current) {
+            progressBarRef.current.style.width = `${progress}%`;
+        }
+        if (progressTextRef.current) {
+            progressTextRef.current.textContent = formatElapsed(currentTimeRef.current);
+        }
+    }, []);
 
     return (
         <div className="absolute inset-0 z-0" style={{ background: '#f0f0f0' }}>
             <DeckGL
+                ref={deckRef}
                 initialViewState={viewState}
                 controller={{
                     doubleClickZoom: true,
@@ -267,12 +362,9 @@ export default function MapContainer() {
                     keyboard: true
                 }}
                 layers={layers}
-                onViewStateChange={({ viewState }) => {
-                    const { longitude, latitude, zoom, pitch, bearing } = viewState as any;
-                    setViewState({ longitude, latitude, zoom, pitch, bearing, maxPitch: INITIAL_VIEW_STATE.maxPitch });
-                }}
+                onViewStateChange={handleViewStateChange}
             >
-                <Map
+                <MapGL
                     ref={mapRef}
                     mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
                     reuseMaps
@@ -280,6 +372,16 @@ export default function MapContainer() {
                     maxPitch={INITIAL_VIEW_STATE.maxPitch}
                 />
             </DeckGL>
+
+            {/* 城市数据加载指示器 */}
+            {isLoadingCity && (
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30">
+                    <div className="bg-slate-900/90 backdrop-blur-xl border border-slate-700/60 rounded-2xl px-8 py-4 flex items-center gap-3 shadow-2xl">
+                        <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
+                        <span className="text-cyan-300 text-sm font-medium">加载城市数据...</span>
+                    </div>
+                </div>
+            )}
 
             {/* 视角控制提示 */}
             <div className="absolute top-4 left-4 bg-white/80 backdrop-blur text-slate-700 text-xs px-3 py-1.5 rounded-lg shadow border border-slate-200 z-10 pointer-events-none">
@@ -309,23 +411,20 @@ export default function MapContainer() {
                     {/* 进度条 */}
                     <div className="flex-1 flex flex-col gap-1.5">
                         <div className="relative h-2 bg-slate-800 rounded-full overflow-hidden cursor-pointer"
-                            onClick={(e) => {
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                const pct = (e.clientX - rect.left) / rect.width;
-                                setCurrentTime(pct * timeRangeRef.current.max);
-                            }}
+                            onClick={handleProgressClick}
                         >
                             <div
-                                className="absolute top-0 left-0 h-full rounded-full transition-[width] duration-75"
+                                ref={progressBarRef}
+                                className="absolute top-0 left-0 h-full rounded-full"
                                 style={{
-                                    width: `${progress}%`,
+                                    width: '0%',
                                     background: 'linear-gradient(90deg, #06b6d4, #10b981, #22d3ee)',
                                     boxShadow: '0 0 12px rgba(6, 182, 212, 0.6)',
                                 }}
                             />
                         </div>
                         <div className="flex justify-between text-[10px] font-mono text-slate-500">
-                            <span>{formatElapsed(currentTime)}</span>
+                            <span ref={progressTextRef}>00:00:00</span>
                             <span>{formatElapsed(timeRangeRef.current.max)}</span>
                         </div>
                     </div>

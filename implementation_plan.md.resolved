@@ -1,128 +1,252 @@
-# 数据增强方案与下一步开发路线图
+# 苍穹织网 — 下一步开发方案
 
-## 一、当前数据底座客观评估
+> **最后更新**: 2026-03-01 | **截止日期**: 2026-04-25 | **剩余**: ~55天
 
-### ✅ 已有且质量可靠的数据
-| 数据 | 来源 | 真实性 | 覆盖 |
-|---|---|---|---|
-| 6城市建筑轮廓+高度 | OSM Overpass | ✅ 真实（OpenStreetMap众包） | 深圳/北京/上海/广州/成都/重庆 |
-| 6城市敏感POI（医院/学校/警察局） | OSM Overpass | ✅ 真实 | 同上 |
-| 6城市需求POI（写字楼/住宅） | OSM Overpass | ✅ 真实 | 同上 |
+---
 
-### ⚠️ 有但存在短板的数据
-| 数据 | 来源 | 问题 |
+## 当前项目状态
+
+### ✅ 已完成
+| 模块 | 状态 | 文件 |
 |---|---|---|
-| UAV轨迹 (5000+条) | HuggingFace riotu-lab | ❌ **合成数据**（非真实飞行），且只映射到深圳 |
-| NBSDC飞行状态 | nbsdc.cn | 🟡 仅有下载指南+小zip，未成功获取完整数据 |
-| UAV Delivery Dataset | GitHub clone | ❌ zip截断损坏，且模拟区域在波哥大 |
+| 3D 地图引擎 | ✅ Deck.gl + 动态飞行动画 | `frontend/src/components/MapContainer.tsx` |
+| 数据面板 | ⚠️ 有UI但数据全假 | `frontend/src/components/DashboardOverlay.tsx` |
+| 6城建筑+POI | ✅ OSM真实数据 | `data/processed/{city}/` |
+| UAV轨迹 | ✅ 5000+条合成轨迹 | `data/processed/trajectories/` |
+| AirLab能耗 | ✅ 187次真实飞行已清洗 | `data/processed/airlab_energy/` |
 
-### ❌ 完全缺失的数据
-| 数据 | 影响模块 |
-|---|---|
-| 气象/风场数据 | 模块二：气象风险热力图 |
-| 真实无人机能耗数据 | 能耗评估模型 |
-| 选址优化算法结果 | 模块三：基站选址 |
-
----
-
-## 二、可获取的真实数据集推荐
-
-### 🥇 推荐一：CMU AirLab 无人机包裹配送能耗数据
-
-> **真实度最高，强烈推荐**
-
-| 项目 | 详情 |
-|---|---|
-| **来源** | 卡内基梅隆大学 AirLab |
-| **下载** | https://doi.org/10.1184/R1/12683453 (Figshare，免费) |
-| **设备** | DJI Matrice 100 (工业级四旋翼) |
-| **内容** | 195次真实飞行记录，含GPS位置、能耗、电池消耗 |
-| **参数** | 载荷(0g/250g/500g)、高度(25-100m)、速度(4-12m/s) 变化实验 |
-| **格式** | CSV，10Hz采样率 |
-| **价值** | 🔥 **直接可用于能耗模型和电量预警**，真实的 GPS+IMU+电量数据 |
-
-### 🥈 推荐二：NBSDC 国家基础学科公共科学数据中心
-
-| 项目 | 详情 |
-|---|---|
-| **来源** | 国家基础学科公共科学数据中心 (nbsdc.cn) |
-| **下载** | 需注册账号后下载 |
-| **设备** | DJI M300 RTK (高端工业机) |
-| **内容** | 位置/姿态/速度/角速度/IMU/RTK差分定位 |
-| **价值** | 🔥 **国内数据源，答辩时说"国家科学数据平台"非常加分** |
-
-### 🥉 推荐三：Kaggle DJI GPS Track
-
-| 项目 | 详情 |
-|---|---|
-| **来源** | Kaggle (uav_gps_track) |
-| **下载** | Kaggle 免费下载 |
-| **设备** | DJI 消费级无人机 |
-| **内容** | 真实飞行GPS轨迹（lat/lon/alt）+ 电池容量 |
-| **价值** | 快速可用，补充轨迹数据多样性 |
-
-### 💡 数据整合策略
-
-> [!IMPORTANT]
-> 不需要抛弃当前的HuggingFace合成轨迹！可以多源混合使用：
-> - **合成轨迹**：作为"企业申报的规划航线"（待审计的对象）
-> - **真实轨迹**：作为"系统标定/验证数据"（证明系统具备处理真实数据的能力）
+### ❌ 未实现（核心缺失）
+- **合规审计引擎** — 项目提案核心卖点，完全未实现
+- **面板动态化** — 142架/1894单/84%全是假数字
+- **能耗预测模型** — AirLab数据已有但未建模
+- **多城市轨迹** — 只有深圳有飞行动画
+- **选址/气象/LLM** — 锦上添花，尚未开始
 
 ---
 
-## 三、下一步开发优先级路线图
+## P0：3D 航线合规审计引擎 🔴
 
-> 距离比赛截止（4月25日）还有约 **57天**。
+> **优先级：最高 | 工期：3-5天 | 这是整个项目成败的关键**
 
-### 🔴 最高优先 — 核心审计功能（做出来就能拿分）
+### 目标
+让系统从"漂亮的3D展示"变成"有实际审计功能的平台"。用户能看到哪些航线违规、为什么违规、在哪里违规。
 
-#### P0：3D 航线合规审计引擎
-**这是项目提案里的"模块一"，是整个项目的核心卖点，目前完全未实现。**
+### 需要实现的功能
 
-- **功能**：检测哪些轨迹穿过建筑物（撞楼）、哪些侵入禁飞区（敏感POI 缓冲区）
-- **算法**：3D 空间相交计算（轨迹点 vs 建筑多边形+高度、vs 禁飞圆柱体）
-- **可视化**：违规航段变红色闪烁 + 右下角事件监控面板显示实时违规日志
-- **工作量**：~3-5天
-- **收益**：🔥 从"漂亮的展示"升级为"有实际功能的系统"
+#### 1. 建筑碰撞检测（轨迹 vs 建筑多边形+高度）
+```
+输入:  轨迹点序列 [(lon, lat, alt), ...]
+     + 建筑GeoJSON (polygon + height)
+输出:  每个轨迹点的碰撞标记 [true/false, ...]
+算法:  对每个轨迹点:
+       1. 2D平面: 点是否在某建筑多边形内 (point-in-polygon)
+       2. 3D高度: 轨迹高度 < 建筑高度？ → 碰撞！
+```
 
-#### P1：DashboardOverlay 动态数据化
-- 当前面板数据全是写死的假数字（142架、1894单等）
-- 应该从真实数据动态计算：活跃航班数、实时违规数、总配送量
+#### 2. 禁飞区入侵检测（轨迹 vs 敏感POI缓冲区）
+```
+输入:  轨迹点序列
+     + poi_sensitive.geojson (点坐标 + 类型)
+     + 缓冲半径规则: 医院500m, 学校300m, 警察局200m
+输出:  入侵事件列表 [{flight_id, poi_name, poi_type, distance, point}]
+算法:  对每个轨迹点:
+       计算到每个敏感POI的水平距离
+       距离 < 缓冲半径 → 入侵！
+```
 
-### 🟡 中优先 — 数据增强（让数据更真实）
+#### 3. 前端可视化
+- **违规航段**：正常绿色 → 违规段变**红色闪烁**
+- **禁飞区圆柱**：敏感POI周围渲染半透明红色圆柱体（已有ColumnLayer基础）
+- **碰撞建筑高亮**：被穿越的建筑变为红色
+- **事件监控面板**：右下角面板从静态假数据 → 显示实时检测到的违规日志
 
-#### P2：CMU AirLab 真实能耗数据接入
-- 下载 Figshare 数据集
-- 编写处理脚本，提取 GPS+能耗+电量字段
-- 映射到深圳区域，作为"真实标定数据"展示
+### 技术方案
 
-#### P3：轨迹多城市扩展
-- 当前轨迹只在深圳，切换到其他城市没有飞行动画
-- 方案：将部分轨迹映射到其他5个城市的 POI 需求点上
+#### [NEW] `scripts/compliance_audit.py`
+Python 离线预计算脚本：
+- 加载 `uav_trajectories.csv` + `buildings_3d.geojson` + `poi_sensitive.geojson`
+- 用 Shapely/GeoPandas 做空间计算
+- 输出 `data/processed/audit_results.json`:
+```json
+{
+  "building_collisions": [
+    {"flight_id": "F001", "segment_start": 12, "segment_end": 15, 
+     "building_id": "B123", "building_name": "xx大厦", "min_clearance_m": -5.2}
+  ],
+  "nfz_intrusions": [
+    {"flight_id": "F002", "point_index": 45, 
+     "poi_name": "南山医院", "poi_type": "hospital", "distance_m": 180, "buffer_m": 500}
+  ],
+  "summary": {
+    "total_flights": 5000, "violation_flights": 342, "violation_rate": 0.068,
+    "building_collisions": 127, "nfz_intrusions": 215
+  }
+}
+```
 
-### 🟢 加分项 — 锦上添花
+#### [MODIFY] `frontend/src/components/MapContainer.tsx`
+- 加载 `audit_results.json`
+- 新增 `ScatterplotLayer` / `PathLayer` 渲染违规航段（红色）
+- 违规航段添加闪烁动画（opacity随时间变化）
+- 碰撞建筑在 GeoJsonLayer 中高亮为红色
 
-#### P4：气象风险热力图
-- 获取历史气象数据（和风天气 API 或 OpenWeather）
-- 结合建筑峡谷效应生成网格化风险矩阵
-- Deck.gl 热力图渲染
-
-#### P5：基站选址优化
-- 基于需求 POI 的聚类分析（DBSCAN/K-Means）
-- 输出最优起降机坪位置推荐
-
-#### P6：LLM 智能审批报告
-- 将违规检测结果结构化后喂给大模型
-- 自动生成"航线审批意见书"
+#### [MODIFY] `frontend/src/components/DashboardOverlay.tsx`
+- 接收审计结果数据作为 props
+- 动态显示：违规航班数、碰撞数、入侵数
+- 事件监控面板：从 audit_results 读取真实违规事件
 
 ---
 
-## 四、建议执行顺序
+## P1：Dashboard 动态数据化 🔴
+
+> **优先级：最高 | 工期：1-2天 | 和P0一起做**
+
+### 当前问题
+`DashboardOverlay.tsx` 中所有数字是硬编码的：
+- `142` 活跃无人机 → 应从轨迹数据统计
+- `1,894` 配送单量 → 应从轨迹总数计算
+- `84%` 空域负载 → 应按建筑密度和轨迹密度推算
+- 事件监控 → 应从 P0 审计结果动态生成
+
+### 实现方案
+
+#### [MODIFY] `frontend/src/components/DashboardOverlay.tsx`
+```
+改造方向:
+1. 接收 props: { trajectoryData, auditResults, currentTime }
+2. 活跃无人机 = 当前时间点正在飞行的轨迹数
+3. 配送单量 = 已完成轨迹总数
+4. 空域负载 = 活跃航班 / 总航道容量 (可设计算公式)
+5. 违规警报 = auditResults.building_collisions.length + nfz_intrusions.length
+6. 事件面板 = 从 auditResults 取最近N条违规事件
+```
+
+---
+
+## P2：AirLab 能耗预测模型 🟡
+
+> **优先级：中 | 工期：2-3天 | 数据已备好**
+
+### 目标
+利用已清洗的187次真实飞行数据，建立"载荷+速度+高度 → 功率/能耗"回归模型，嵌入前端展示。
+
+### 实现方案
+
+#### [NEW] `scripts/energy_model.py`
+```
+1. 从 flights_detail.csv 提取: airspeed, diffalt, payload, power
+2. 训练简单回归模型 (线性回归 / 随机森林 / 轻量LSTM)
+3. 输出模型系数/预测函数
+4. 对每条UAV轨迹做能耗预测：
+   - 预测每段飞行的功率 → 累计能耗
+   - 判断是否有电量耗尽风险
+5. 输出 data/processed/energy_predictions.json
+```
+
+#### [MODIFY] `MapContainer.tsx`
+- 轨迹颜色编码：绿色(充足) → 黄色(中等) → 红色(电量危险)
+- 点击轨迹弹出能耗详情面板
+
+---
+
+## P3：轨迹多城市扩展 🟡
+
+> **优先级：中 | 工期：1-2天**
+
+### 目标
+切换城市时也能看到飞行动画（当前仅深圳有）。
+
+### 实现方案
+
+#### [NEW] `scripts/expand_trajectories.py`
+```
+1. 将部分深圳轨迹做坐标平移，映射到其他5城市
+2. 以各城市的 poi_demand.geojson 需求点作为起降点
+3. 每个城市分配 ~500-800 条轨迹
+4. 输出到 data/processed/{city}/trajectories.csv
+```
+
+#### [MODIFY] `MapContainer.tsx`
+- 城市切换时加载对应城市的轨迹文件
+- loadAllData 改为按城市分别加载
+
+---
+
+## P5：基站选址优化 🟢
+
+> **优先级：低 | 工期：2-3天 | 答辩加分项**
+
+### 实现方案
+
+#### [NEW] `scripts/vertiport_optimization.py`
+```
+1. 加载 poi_demand.geojson（写字楼/住宅 = 需求热点）
+2. 加载 poi_sensitive.geojson（医院/学校 = 约束点）
+3. 加权 DBSCAN/K-Means 聚类
+4. 多目标优化: 最大化覆盖 + 最小化扰民
+5. 输出 Top 3-5 最优基站位置 + 覆盖范围
+```
+
+#### [MODIFY] `MapContainer.tsx`
+- 新增图层渲染推荐基站位置（脉冲动画圆环）
+- 显示覆盖半径圆
+
+---
+
+## P6：LLM 智能审批报告 🟢
+
+> **优先级：低 | 工期：2-3天 | 答辩亮点**
+
+### 实现方案
+```
+1. 将 P0 审计结果结构化为 Prompt
+2. 调用 DeepSeek/Qwen API 生成"航线审批意见书"
+3. 前端新增报告面板，展示LLM生成的自然语言审批建议
+```
+
+---
+
+## 执行时间表
 
 ```
-Week 1-2: P0 合规审计引擎 + P1 面板动态化
-Week 3:   P2 CMU数据接入 + P3 多城市轨迹
-Week 4-5: P4 气象 或 P5 选址（二选一先做）
-Week 6-7: P6 LLM + 整体打磨
-Week 8:   答辩准备、视频录制
+Week 1 (3/1-3/7):   P0 合规审计引擎 + P1 面板动态化
+Week 2 (3/8-3/14):  P2 能耗预测模型 + P3 多城市轨迹
+Week 3 (3/15-3/21): P5 选址优化 + UI全面打磨
+Week 4 (3/22-3/28): P6 LLM审批 + 整合测试
+Week 5-6 (4月):     答辩准备、PPT制作、演示视频录制
+缓冲:               1-2周弹性空间应对意外
 ```
+
+---
+
+## 验证计划
+
+### 自动验证
+```bash
+# P0 合规审计
+python scripts/compliance_audit.py
+python -c "
+import json
+with open('data/processed/audit_results.json') as f:
+    r = json.load(f)
+assert r['summary']['total_flights'] > 0
+assert r['summary']['building_collisions'] >= 0
+print(f'✅ 审计完成: {r[\"summary\"][\"violation_flights\"]}/{r[\"summary\"][\"total_flights\"]} 违规')
+"
+
+# P2 能耗模型
+python scripts/energy_model.py
+# 验证预测文件
+python -c "
+import json, os
+assert os.path.exists('data/processed/energy_predictions.json')
+print('✅ 能耗预测完成')
+"
+```
+
+### 前端手动验证
+- 启动前端 `cd frontend && npm run dev`
+- 检查地图是否显示红色违规航段
+- 检查面板数字是否动态变化
+- 切换城市是否有飞行动画
+- 点击轨迹是否弹出详情
