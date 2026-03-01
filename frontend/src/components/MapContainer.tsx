@@ -23,6 +23,15 @@ const CITY_COORDS: Record<string, { longitude: number, latitude: number, zoom: n
     "chongqing": { longitude: 106.551, latitude: 29.563, zoom: 13 }
 };
 
+const CITY_RADIUS: Record<string, number> = {
+    "shenzhen": 35,
+    "beijing": 150,
+    "shanghai": 120,
+    "guangzhou": 100,
+    "chengdu": 80,
+    "chongqing": 60
+};
+
 // 类型定义
 interface UAVPath {
     id: string;
@@ -45,7 +54,7 @@ interface CityData {
 }
 
 // 动画配置
-const ANIMATION_SPEED = 60; // 每帧推进60秒（数据覆盖3.5天）
+const ANIMATION_SPEED = 0.5; // 每帧推进 0.5 秒，大幅度降低以模拟真实飞行速度
 const TRAIL_LENGTH = 1200;  // 拖尾长度（秒），越长拖尾越明显
 
 export default function MapContainer() {
@@ -292,7 +301,7 @@ export default function MapContainer() {
             id: 'poi-sensitive-point-layer',
             data: sensitivePoints,
             diskResolution: 24,
-            radius: 35,
+            radius: CITY_RADIUS[currentCity] || 35,
             extruded: true,
             pickable: true,
             elevationScale: 1,
@@ -301,7 +310,7 @@ export default function MapContainer() {
             getLineColor: [185, 28, 28, 200],
             getElevation: 80,
         }),
-    ], [buildingsData, poiDemand, poiSensitive, sensitivePoints]);
+    ], [buildingsData, poiDemand, poiSensitive, sensitivePoints, currentCity]);
 
     // TripsLayer 独立 memo，初始 currentTime 为 0，后续通过 deck.setProps 更新
     const tripsLayer = useMemo(() =>
@@ -321,9 +330,11 @@ export default function MapContainer() {
     );
 
     // 合并所有 layers
+    // 拖拽地图时会触发 setViewState 引起 React 重新渲染
+    // 在重新渲染时必须使用实时最新的 currentTime 来 clone 轨迹图层，否则 DeckGL 会回退到旧时间导致轨迹“消失”
     const layers = useMemo(() =>
-        [...staticLayers, tripsLayer].filter(Boolean),
-        [staticLayers, tripsLayer]
+        [...staticLayers, tripsLayer ? tripsLayer.clone({ currentTime: currentTimeRef.current }) : undefined].filter(Boolean),
+        [staticLayers, tripsLayer, viewState]
     );
 
     // ViewState 回调稳定化
@@ -349,7 +360,11 @@ export default function MapContainer() {
     }, []);
 
     return (
-        <div className="absolute inset-0 z-0" style={{ background: '#f0f0f0' }}>
+        <div
+            className="absolute inset-0 z-0"
+            style={{ background: '#f0f0f0' }}
+            onContextMenu={(e) => e.preventDefault()} // 阻止默认右键菜单，防止拖拽视角时弹出
+        >
             <DeckGL
                 ref={deckRef}
                 initialViewState={viewState}
@@ -388,56 +403,59 @@ export default function MapContainer() {
                 💡 提示：按住 <span className="font-semibold text-cyan-600">右键</span> 或 <span className="font-semibold text-cyan-600">Ctrl+左键</span> 拖动可360°旋转/调整视角
             </div>
 
-            {/* 底部动画控制条 */}
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
-                <div className="bg-slate-900/90 backdrop-blur-xl border border-slate-700/60 rounded-2xl px-6 py-4 flex items-center gap-5 shadow-2xl min-w-[520px]">
+            {/* 底部动画控制条 - 切换为柔和高定玻璃态 */}
+            <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
+                <div className="bg-white/40 backdrop-blur-2xl border border-white/50 rounded-[2rem] px-8 py-5 flex items-center gap-6 shadow-[0_8px_32px_0_rgba(31,38,135,0.15)] min-w-[580px] relative overflow-hidden">
+                    {/* 微弱暗色渐变垫底 */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900/5 to-transparent pointer-events-none"></div>
+
                     {/* 播放/暂停按钮 */}
                     <button
                         onClick={() => setIsPlaying(!isPlaying)}
-                        className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-400 to-emerald-400 flex items-center justify-center hover:scale-110 transition-transform shadow-lg shadow-cyan-500/30"
+                        className="relative z-10 w-12 h-12 rounded-full bg-white/60 border border-white/80 backdrop-blur-md flex items-center justify-center hover:bg-white/90 hover:scale-105 transition-all shadow-sm text-slate-800"
                     >
                         {isPlaying ? (
-                            <svg width="14" height="16" viewBox="0 0 14 16" fill="none">
-                                <rect x="1" y="1" width="4" height="14" rx="1" fill="#0f172a" />
-                                <rect x="9" y="1" width="4" height="14" rx="1" fill="#0f172a" />
+                            <svg width="14" height="16" viewBox="0 0 14 16" fill="currentColor">
+                                <rect x="2" y="2" width="3" height="12" rx="1" />
+                                <rect x="9" y="2" width="3" height="12" rx="1" />
                             </svg>
                         ) : (
-                            <svg width="14" height="16" viewBox="0 0 14 16" fill="none">
-                                <path d="M2 1L13 8L2 15V1Z" fill="#0f172a" />
+                            <svg width="14" height="16" viewBox="0 0 14 16" fill="currentColor" className="ml-1">
+                                <path d="M2.5 1.5L12.5 8L2.5 14.5V1.5Z" />
                             </svg>
                         )}
                     </button>
 
                     {/* 进度条 */}
-                    <div className="flex-1 flex flex-col gap-1.5">
-                        <div className="relative h-2 bg-slate-800 rounded-full overflow-hidden cursor-pointer"
+                    <div className="flex-1 flex flex-col gap-2 relative z-10">
+                        <div className="relative h-2.5 bg-black/5 rounded-full overflow-hidden cursor-pointer shadow-inner border border-white/30"
                             onClick={handleProgressClick}
                         >
                             <div
                                 ref={progressBarRef}
-                                className="absolute top-0 left-0 h-full rounded-full"
+                                className="absolute top-0 left-0 h-full rounded-full transition-all duration-75"
                                 style={{
                                     width: '0%',
-                                    background: 'linear-gradient(90deg, #06b6d4, #10b981, #22d3ee)',
-                                    boxShadow: '0 0 12px rgba(6, 182, 212, 0.6)',
+                                    background: 'linear-gradient(90deg, #64748b, #334155)',
+                                    boxShadow: '0 0 10px rgba(51, 65, 85, 0.3)'
                                 }}
                             />
                         </div>
-                        <div className="flex justify-between text-[10px] font-mono text-slate-500">
+                        <div className="flex justify-between text-[11px] font-black text-slate-600 tracking-wide" style={{ textShadow: '0 1px 1px rgba(255,255,255,0.8)' }}>
                             <span ref={progressTextRef}>00:00:00</span>
                             <span>{formatElapsed(timeRangeRef.current.max)}</span>
                         </div>
                     </div>
 
                     {/* 速度控制 */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-white/30 p-1.5 rounded-full shadow-inner border border-white/50 relative z-10">
                         {[0.5, 1, 2, 4].map(speed => (
                             <button
                                 key={speed}
                                 onClick={() => setAnimationSpeed(speed)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${animationSpeed === speed
-                                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 shadow-[0_0_8px_rgba(6,182,212,0.3)]'
-                                    : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                                className={`px-3 py-1.5 rounded-full text-xs font-black transition-all ${animationSpeed === speed
+                                    ? 'bg-slate-700 text-white shadow-md'
+                                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                                     }`}
                             >
                                 {speed}×
@@ -445,20 +463,28 @@ export default function MapContainer() {
                         ))}
                     </div>
 
-                    {/* 城市快速跳转 (仅跳转视角) */}
-                    <div className="flex items-center gap-2 ml-4 border-l border-slate-700/60 pl-4">
-                        <select
-                            value={currentCity}
-                            onChange={handleCityJump}
-                            className="bg-slate-800 text-cyan-300 text-sm rounded border border-slate-600 px-2 py-1 outline-none cursor-pointer"
-                        >
-                            <option value="shenzhen">深圳南山</option>
-                            <option value="beijing">北京核心</option>
-                            <option value="shanghai">上海核心</option>
-                            <option value="guangzhou">广州核心</option>
-                            <option value="chengdu">成都核心</option>
-                            <option value="chongqing">重庆主城</option>
-                        </select>
+                    {/* 城市快速跳转 */}
+                    <div className="flex items-center ml-2 relative z-10">
+                        <div className="relative group">
+                            <select
+                                value={currentCity}
+                                onChange={handleCityJump}
+                                className="appearance-none bg-white/60 backdrop-blur-md text-slate-800 font-bold text-sm rounded-full border border-white/80 pl-5 pr-11 py-2 outline-none cursor-pointer hover:bg-white/80 transition-all shadow-sm focus:ring-2 focus:ring-slate-300"
+                            >
+                                <option value="shenzhen" className="font-medium bg-white text-slate-800">深圳 · 南山</option>
+                                <option value="beijing" className="font-medium bg-white text-slate-800">北京 · 核心</option>
+                                <option value="shanghai" className="font-medium bg-white text-slate-800">上海 · 核心</option>
+                                <option value="guangzhou" className="font-medium bg-white text-slate-800">广州 · 核心</option>
+                                <option value="chengdu" className="font-medium bg-white text-slate-800">成都 · 核心</option>
+                                <option value="chongqing" className="font-medium bg-white text-slate-800">重庆 · 主城</option>
+                            </select>
+                            {/* Custom Select Arrow */}
+                            <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 group-hover:text-slate-800 transition-colors">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
