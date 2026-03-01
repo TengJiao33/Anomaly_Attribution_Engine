@@ -54,7 +54,7 @@ interface CityData {
 }
 
 // 动画配置
-const ANIMATION_SPEED = 0.5; // 每帧推进 0.5 秒，大幅度降低以模拟真实飞行速度
+const ANIMATION_SPEED = 0.016; // 每帧推进 0.016 秒 (以60帧计约等于真实时间的1x速度)
 const TRAIL_LENGTH = 1200;  // 拖尾长度（秒），越长拖尾越明显
 
 export default function MapContainer() {
@@ -64,7 +64,22 @@ export default function MapContainer() {
     const [poiDemand, setPoiDemand] = useState<any>(null);
     const [poiSensitive, setPoiSensitive] = useState<any>(null);
     const [trajectories, setTrajectories] = useState<UAVPath[]>([]);
+    const [energyData, setEnergyData] = useState<any>(null);
+    const [selectedFlight, setSelectedFlight] = useState<any>(null);
     const [isLoadingCity, setIsLoadingCity] = useState(false);
+
+    // Custom Dropdown State
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
+    // 城市列表定义
+    const CITIES = [
+        { id: "shenzhen", label: "深圳 · 南山" },
+        { id: "beijing", label: "北京 · 核心" },
+        { id: "shanghai", label: "上海 · 核心" },
+        { id: "guangzhou", label: "广州 · 核心" },
+        { id: "chengdu", label: "成都 · 核心" },
+        { id: "chongqing", label: "重庆 · 主城" }
+    ];
 
     // 城市数据缓存：切换回已访问城市时直接复用，避免重复 fetch
     const dataCacheRef = useRef<Map<string, CityData>>(new Map());
@@ -77,11 +92,53 @@ export default function MapContainer() {
     const timeRangeRef = useRef({ min: 0, max: 0 });
     const animFrameRef = useRef<number>(0);
     const mapRef = useRef<MapRef>(null);
+
+    // Dashboard metrics 预计算缓存 (按秒存储)
+    const metricsRef = useRef<{ active: number[], cumulative: number[], maxActive: number }>({ active: [], cumulative: [], maxActive: 1 });
+
     // DeckGL 实例 ref，用于直接更新 layer props
     const deckRef = useRef<any>(null);
     // 进度条 DOM ref，用于直接操作 DOM 避免重渲染
     const progressBarRef = useRef<HTMLDivElement>(null);
     const progressTextRef = useRef<HTMLSpanElement>(null);
+
+    // 预计算轨迹在每一秒的活跃数与累计起飞数
+    useEffect(() => {
+        if (!trajectories.length || timeRangeRef.current.max <= 0) return;
+
+        const maxSec = Math.ceil(timeRangeRef.current.max);
+        const active = new Int32Array(maxSec + 1);
+        const cum = new Int32Array(maxSec + 1);
+
+        for (const t of trajectories) {
+            if (!t.timestamps || t.timestamps.length === 0) continue;
+            const startStr = t.timestamps[0];
+            const endStr = t.timestamps[t.timestamps.length - 1];
+
+            const startSec = Math.max(0, Math.floor(startStr));
+            const endSec = Math.min(maxSec, Math.ceil(endStr));
+
+            if (startSec <= maxSec) cum[startSec] += 1;
+
+            for (let s = startSec; s <= endSec; s++) {
+                active[s] += 1;
+            }
+        }
+
+        let currentCum = 0;
+        let maxActive = 0;
+        for (let i = 0; i <= maxSec; i++) {
+            currentCum += cum[i];
+            cum[i] = currentCum;
+            if (active[i] > maxActive) maxActive = active[i];
+        }
+
+        metricsRef.current = {
+            active: Array.from(active),
+            cumulative: Array.from(cum),
+            maxActive: maxActive || 1
+        };
+    }, [trajectories]);
 
     const [currentCity, setCurrentCity] = useState("shenzhen");
     const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
@@ -100,10 +157,11 @@ export default function MapContainer() {
         setIsLoadingCity(true);
         const basePath = `/data/processed/${city}`;
         try {
+            const cacheBuster = `?t=${Date.now()}`;
             const [bRes, pDRes, pSRes] = await Promise.all([
-                fetch(`${basePath}/buildings_3d.geojson`).then(r => r.ok ? r.json() : null),
-                fetch(`${basePath}/poi_demand.geojson`).then(r => r.ok ? r.json() : null),
-                fetch(`${basePath}/poi_sensitive.geojson`).then(r => r.ok ? r.json() : null)
+                fetch(`${basePath}/buildings_3d.geojson${cacheBuster}`).then(r => r.ok ? r.json() : null),
+                fetch(`${basePath}/poi_demand.geojson${cacheBuster}`).then(r => r.ok ? r.json() : null),
+                fetch(`${basePath}/poi_sensitive.geojson${cacheBuster}`).then(r => r.ok ? r.json() : null)
             ]);
 
             const cityData: CityData = {
@@ -130,10 +188,19 @@ export default function MapContainer() {
         // 加载初始城市
         loadCityData("shenzhen");
 
-        // 加载轨迹数据
+        // 加载轨迹数据与能耗预测数据
         (async () => {
             try {
-                const tRes = await fetch('/data/processed/trajectories/uav_trajectories.json');
+                const [tRes, eRes] = await Promise.all([
+                    fetch('/data/processed/trajectories/uav_trajectories.json'),
+                    fetch('/data/processed/energy_predictions.json').catch(() => null)
+                ]);
+
+                if (eRes && eRes.ok) {
+                    const eData = await eRes.json();
+                    setEnergyData(eData);
+                }
+
                 if (tRes.ok) {
                     const data: PreprocessedData = await tRes.json();
                     timeRangeRef.current = data.timeRange;
@@ -145,6 +212,27 @@ export default function MapContainer() {
             }
         })();
     }, [loadCityData]);
+
+    const updateDashboardDOM = useCallback((time: number) => {
+        const sec = Math.min(Math.floor(time), metricsRef.current.active.length - 1);
+        if (sec >= 0) {
+            const activeCount = metricsRef.current.active[sec] || 0;
+            const cumCount = metricsRef.current.cumulative[sec] || 0;
+            const loadPct = Math.min(100, Math.round((activeCount / metricsRef.current.maxActive) * 100));
+
+            const domActive = document.getElementById('dashboard-active-drones');
+            if (domActive) domActive.textContent = activeCount.toString();
+
+            const domCum = document.getElementById('dashboard-cumulative-flights');
+            if (domCum) domCum.textContent = cumCount.toString();
+
+            const domLoad = document.getElementById('dashboard-airspace-load');
+            if (domLoad) domLoad.textContent = `${loadPct}%`;
+
+            const domBar = document.getElementById('dashboard-airspace-bar');
+            if (domBar) domBar.style.width = `${loadPct}%`;
+        }
+    }, []);
 
     // ====== 动画循环：完全绕过 React 渲染管线 ======
     const animate = useCallback(() => {
@@ -182,8 +270,11 @@ export default function MapContainer() {
             progressTextRef.current.textContent = formatElapsed(next);
         }
 
+        // 更新 Dashboard 定制化数据
+        updateDashboardDOM(next);
+
         animFrameRef.current = requestAnimationFrame(animate);
-    }, [animationSpeed]);
+    }, [animationSpeed, updateDashboardDOM]);
 
     useEffect(() => {
         if (isPlaying) {
@@ -195,9 +286,10 @@ export default function MapContainer() {
     }, [isPlaying, animate]);
 
     // 城市切换处理：切换视角 + 按需加载数据
-    const handleCityJump = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-        const city = e.target.value;
+    const handleCityJump = useCallback((city: string) => {
         setCurrentCity(city);
+        setIsDropdownOpen(false); // 关闭自定义下拉菜单
+
         if (CITY_COORDS[city]) {
             setViewState(prev => ({
                 ...prev,
@@ -319,23 +411,37 @@ export default function MapContainer() {
             data: trajectories,
             getPath: (d: UAVPath) => d.path,
             getTimestamps: (d: UAVPath) => d.timestamps,
-            getColor: [255, 180, 0],        // 金黄色
+            getColor: (d: UAVPath) => {
+                if (energyData && energyData[d.id]) {
+                    const payload = energyData[d.id].payload;
+                    // 以载重分配轨迹颜色，取代先前不合理的电量颜色
+                    if (payload >= 0.75) return [236, 72, 153]; // 粉红色(重载)
+                    if (payload >= 0.5) return [168, 85, 247];  // 紫色(中等载重)
+                    return [14, 165, 233]; // 天蓝色(轻载/空载)
+                }
+                return [14, 165, 233]; // 默认天蓝色
+            },
             widthMinPixels: 2.5,
             trailLength: TRAIL_LENGTH,
             currentTime: currentTimeRef.current,
             shadowEnabled: false,
             opacity: 0.9,
+            pickable: true,
+            autoHighlight: true,
+            highlightColor: [255, 255, 255, 255],
+            onClick: (info: any) => {
+                if (info.object) {
+                    setSelectedFlight(info.object);
+                }
+            }
         }),
-        [trajectories]
+        [trajectories, energyData]
     );
 
     // 合并所有 layers
-    // 拖拽地图时会触发 setViewState 引起 React 重新渲染
-    // 在重新渲染时必须使用实时最新的 currentTime 来 clone 轨迹图层，否则 DeckGL 会回退到旧时间导致轨迹“消失”
-    const layers = useMemo(() =>
-        [...staticLayers, tripsLayer ? tripsLayer.clone({ currentTime: currentTimeRef.current }) : undefined].filter(Boolean),
-        [staticLayers, tripsLayer, viewState]
-    );
+    // 每次组件渲染时（如选中飞行器、暂停、修改视角等），都会重新构建 layers 数组，
+    // 此时从 ref 中读取最新时间，确保 DeckGL 不会因为旧层数据而导致轨迹消失或回滚老的时间
+    const layers = [...staticLayers, tripsLayer ? tripsLayer.clone({ currentTime: currentTimeRef.current }) : undefined].filter(Boolean);
 
     // ViewState 回调稳定化
     const handleViewStateChange = useCallback(({ viewState }: any) => {
@@ -356,6 +462,22 @@ export default function MapContainer() {
         }
         if (progressTextRef.current) {
             progressTextRef.current.textContent = formatElapsed(currentTimeRef.current);
+        }
+
+        // 拖动时同步更新 Dashboard 数据
+        updateDashboardDOM(currentTimeRef.current);
+
+        // 当处于暂停状态时，拖动进度条也需立刻刷新 DeckGL 中的时间
+        const deck = deckRef.current?.deck;
+        if (deck) {
+            const currentLayers = deck.props.layers || [];
+            const updatedLayers = currentLayers.map((layer: any) => {
+                if (layer?.id === 'uav-trips-layer') {
+                    return layer.clone({ currentTime: currentTimeRef.current });
+                }
+                return layer;
+            });
+            deck.setProps({ layers: updatedLayers });
         }
     }, []);
 
@@ -388,6 +510,72 @@ export default function MapContainer() {
                 />
             </DeckGL>
 
+            {/* 无人机详情面板 */}
+            {selectedFlight && (
+                <div className="absolute bottom-32 left-8 z-30 w-80 bg-white/40 backdrop-blur-2xl border border-white/50 rounded-[2rem] shadow-[0_8px_32px_0_rgba(31,38,135,0.15)] text-slate-800 p-6 pointer-events-auto transition-all animate-in fade-in slide-in-from-left-4 overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-br from-slate-900/5 to-transparent pointer-events-none"></div>
+                    <div className="relative z-10">
+                        <div className="flex justify-between items-center mb-5 pb-3 border-b border-slate-300/50">
+                            <h3 className="text-sm font-black text-slate-700 tracking-wider flex items-center gap-2">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-600">
+                                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+                                </svg>
+                                无人机档案: {selectedFlight.id}
+                            </h3>
+                            <button onClick={() => setSelectedFlight(null)} className="text-slate-400 hover:text-slate-600 transition-colors bg-white/50 p-1 rounded-full">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            </button>
+                        </div>
+                        {energyData && energyData[selectedFlight.id] ? (() => {
+                            const ed = energyData[selectedFlight.id];
+                            const timestamps = selectedFlight.timestamps;
+                            let idx = timestamps.findIndex((t: number) => t >= currentTimeRef.current);
+                            if (idx === -1) idx = timestamps.length - 1;
+                            if (idx < 0) idx = 0;
+                            const bat = ed.battery[idx];
+                            const pwr = ed.power[idx];
+                            const startBat = ed.battery[0];
+                            const minBat = Math.min(...ed.battery);
+
+                            return (
+                                <div className="flex flex-col gap-3.5 text-sm">
+                                    <div className="flex justify-between items-center bg-white/60 p-3 rounded-xl border border-white/80 shadow-sm">
+                                        <span className="text-slate-600 font-bold tracking-wide text-xs">当前负荷功率</span>
+                                        <span className="font-mono text-indigo-700 font-black tracking-wider">{pwr.toFixed(1)} W</span>
+                                    </div>
+                                    <div className="flex justify-between items-center bg-white/60 p-3 rounded-xl border border-white/80 shadow-sm">
+                                        <span className="text-slate-600 font-bold tracking-wide text-xs">出发时电量</span>
+                                        <span className="font-mono font-black tracking-wider text-emerald-600">
+                                            {startBat.toFixed(1)}%
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center bg-white/60 p-3 rounded-xl border border-white/80 shadow-sm">
+                                        <span className="text-slate-600 font-bold tracking-wide text-xs">实时流失电量</span>
+                                        <span className="font-mono font-black tracking-wider" style={{ color: bat < 30 ? '#e11d48' : bat < 60 ? '#d97706' : '#059669' }}>
+                                            {bat.toFixed(1)}%
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center bg-white/60 p-3 rounded-xl border border-white/80 shadow-sm">
+                                        <span className="text-slate-600 font-bold tracking-wide text-xs">预计降落电量</span>
+                                        <span className="font-mono font-black tracking-wider" style={{ color: minBat < 30 ? '#e11d48' : minBat < 60 ? '#d97706' : '#059669' }}>
+                                            {minBat.toFixed(1)}%
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center bg-white/60 p-3 rounded-xl border border-white/80 shadow-sm">
+                                        <span className="text-slate-600 font-bold tracking-wide text-xs">载重状态</span>
+                                        <span className="font-mono text-slate-700 font-black tracking-wider bg-slate-200/50 px-2 py-0.5 rounded shadow-inner">{ed.payload} kg</span>
+                                    </div>
+                                </div>
+                            );
+                        })() : (
+                            <div className="py-6 text-center text-slate-500 font-bold animate-pulse border border-dashed border-slate-300 rounded-xl bg-white/30">
+                                正在接入AirLab能耗模型计算...
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* 城市数据加载指示器 */}
             {isLoadingCity && (
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30">
@@ -405,9 +593,9 @@ export default function MapContainer() {
 
             {/* 底部动画控制条 - 切换为柔和高定玻璃态 */}
             <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
-                <div className="bg-white/40 backdrop-blur-2xl border border-white/50 rounded-[2rem] px-8 py-5 flex items-center gap-6 shadow-[0_8px_32px_0_rgba(31,38,135,0.15)] min-w-[580px] relative overflow-hidden">
+                <div className="bg-white/40 backdrop-blur-2xl border border-white/50 rounded-[2rem] px-8 py-5 flex items-center gap-6 shadow-[0_8px_32px_0_rgba(31,38,135,0.15)] min-w-[580px] relative">
                     {/* 微弱暗色渐变垫底 */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900/5 to-transparent pointer-events-none"></div>
+                    <div className="absolute inset-0 rounded-[2rem] bg-gradient-to-t from-slate-900/5 to-transparent pointer-events-none overflow-hidden" style={{ zIndex: 0 }}></div>
 
                     {/* 播放/暂停按钮 */}
                     <button
@@ -441,15 +629,18 @@ export default function MapContainer() {
                                 }}
                             />
                         </div>
-                        <div className="flex justify-between text-[11px] font-black text-slate-600 tracking-wide" style={{ textShadow: '0 1px 1px rgba(255,255,255,0.8)' }}>
-                            <span ref={progressTextRef}>00:00:00</span>
-                            <span>{formatElapsed(timeRangeRef.current.max)}</span>
+                        <div className="flex justify-between items-center text-[11px] font-black text-slate-600 tracking-wider" style={{ textShadow: '0 1px 1px rgba(255,255,255,0.8)' }}>
+                            <div className="flex items-center gap-1.5">
+                                <span ref={progressTextRef}>00:00:00</span>
+                                <span className="text-slate-400 font-medium">/</span>
+                                <span className="text-slate-500">{formatElapsed(timeRangeRef.current.max)}</span>
+                            </div>
                         </div>
                     </div>
 
                     {/* 速度控制 */}
                     <div className="flex items-center gap-1.5 bg-white/30 p-1.5 rounded-full shadow-inner border border-white/50 relative z-10">
-                        {[0.5, 1, 2, 4].map(speed => (
+                        {[0.5, 1, 2, 1024].map(speed => (
                             <button
                                 key={speed}
                                 onClick={() => setAnimationSpeed(speed)}
@@ -463,27 +654,48 @@ export default function MapContainer() {
                         ))}
                     </div>
 
-                    {/* 城市快速跳转 */}
-                    <div className="flex items-center ml-2 relative z-10">
+                    {/* 城市快速跳转 (Custom Dropdown) */}
+                    <div className="flex items-center ml-2 relative z-50">
                         <div className="relative group">
-                            <select
-                                value={currentCity}
-                                onChange={handleCityJump}
-                                className="appearance-none bg-white/60 backdrop-blur-md text-slate-800 font-bold text-sm rounded-full border border-white/80 pl-5 pr-11 py-2 outline-none cursor-pointer hover:bg-white/80 transition-all shadow-sm focus:ring-2 focus:ring-slate-300"
+                            {/* Dropdown Trigger */}
+                            <button
+                                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                                className="appearance-none bg-white/60 backdrop-blur-md text-slate-800 font-bold text-sm rounded-full border border-white/80 pl-5 pr-11 py-2 outline-none cursor-pointer hover:bg-white/80 transition-all shadow-sm focus:ring-2 focus:ring-slate-300 w-[140px] text-left flex items-center justify-between"
                             >
-                                <option value="shenzhen" className="font-medium bg-white text-slate-800">深圳 · 南山</option>
-                                <option value="beijing" className="font-medium bg-white text-slate-800">北京 · 核心</option>
-                                <option value="shanghai" className="font-medium bg-white text-slate-800">上海 · 核心</option>
-                                <option value="guangzhou" className="font-medium bg-white text-slate-800">广州 · 核心</option>
-                                <option value="chengdu" className="font-medium bg-white text-slate-800">成都 · 核心</option>
-                                <option value="chongqing" className="font-medium bg-white text-slate-800">重庆 · 主城</option>
-                            </select>
-                            {/* Custom Select Arrow */}
-                            <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 group-hover:text-slate-800 transition-colors">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                    <polyline points="6 9 12 15 18 9"></polyline>
-                                </svg>
-                            </div>
+                                {CITIES.find(c => c.id === currentCity)?.label || "选择城市"}
+
+                                <div className={`absolute right-3.5 pointer-events-none text-slate-500 transition-transform duration-300 ${isDropdownOpen ? 'rotate-180' : 'rotate-0'}`}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </div>
+                            </button>
+
+                            {/* Dropdown Menu (Glassmorphism) */}
+                            {isDropdownOpen && (
+                                <>
+                                    {/* Invisible backdrop to catch clicks outside */}
+                                    <div
+                                        className="fixed inset-0 z-40"
+                                        onClick={() => setIsDropdownOpen(false)}
+                                    ></div>
+
+                                    <div className="absolute bottom-[130%] right-0 w-[140px] bg-white/70 backdrop-blur-xl border border-white/80 rounded-2xl shadow-[0_8px_32px_0_rgba(31,38,135,0.2)] py-2 z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                        {CITIES.map(city => (
+                                            <div
+                                                key={city.id}
+                                                onClick={() => handleCityJump(city.id)}
+                                                className={`px-5 py-2.5 text-sm font-semibold cursor-pointer transition-colors ${currentCity === city.id
+                                                    ? 'bg-slate-800/10 text-slate-900 border-l-4 border-slate-700'
+                                                    : 'text-slate-600 hover:bg-white/50 hover:text-slate-800 border-l-4 border-transparent'
+                                                    }`}
+                                            >
+                                                {city.label}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>

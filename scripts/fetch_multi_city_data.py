@@ -47,10 +47,10 @@ CITY_CONFIG = {
     },
     "beijing": {
         "name": "北京核心",
-        "districts": ["朝阳区", "海淀区", "西城区"],
+        "districts": ["朝阳区", "海淀区", "西城区", "东城区"],
         "admin_level": "8",
         "parent_area": "北京市",
-        "desc": "朝阳+海淀+西城核心区",
+        "desc": "朝阳+海淀+西城+东城核心区",
         "bbox": (39.87, 116.28, 39.98, 116.48),
     },
     "shanghai": {
@@ -217,14 +217,22 @@ def _build_district_query(district: str, config: dict) -> str:
             out geom;
             """
 
-    # area 查询: 仅按名称匹配, 不限 admin_level
-    # 行政区名称（如"渝中区""静安区"）在全国范围内基本唯一
+    bbox = config.get("bbox")
+    bbox_filter = f"({bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]})" if bbox else ""
+
+    # area 查询: 增加父级区域限制，防止全国重名区冲突（如宁波长春乱入）
+    parent_area = config.get("parent_area", "")
+    if parent_area:
+        area_query = f'area["name"="{parent_area}"]->.city;\n    area["name"="{district}"](area.city)->.target;'
+    else:
+        area_query = f'area["name"="{district}"]["boundary"="administrative"]->.target;'
+
     query = f"""
     [out:json][timeout:600][maxsize:1073741824];
-    area["name"="{district}"]["boundary"="administrative"]->.target;
+    {area_query}
     (
-      way["building"](area.target);
-      relation["building"](area.target);
+      way["building"](area.target){bbox_filter};
+      relation["building"](area.target){bbox_filter};
     );
     out geom;
     """
@@ -299,13 +307,21 @@ def _build_poi_query_for_district(district: str, config: dict, poi_type: str) ->
         s, w, n, e = bbox
         area_filter = f"({s},{w},{n},{e})"
     else:
-        area_filter = f"(area.target)"
+        bbox = config.get("bbox")
+        bbox_filter = f"({bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]})" if bbox else ""
+        area_filter = f"(area.target){bbox_filter}"
 
     # 构建查询头
     if district in non_standard_districts:
         query_head = f'[out:json][timeout:300][maxsize:1073741824];'
     else:
-        query_head = f"""[out:json][timeout:300][maxsize:1073741824];
+        parent_area = config.get("parent_area", "")
+        if parent_area:
+            query_head = f"""[out:json][timeout:300][maxsize:1073741824];
+    area["name"="{parent_area}"]->.city;
+    area["name"="{district}"](area.city)->.target;"""
+        else:
+            query_head = f"""[out:json][timeout:300][maxsize:1073741824];
     area["name"="{district}"]["boundary"="administrative"]->.target;"""
 
     if poi_type == "sensitive":

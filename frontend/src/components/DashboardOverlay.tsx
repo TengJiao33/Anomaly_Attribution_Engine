@@ -37,28 +37,28 @@ export default function DashboardOverlay() {
                                 <Navigation size={14} className="text-blue-600" /> 活跃无人机阵列
                             </span>
                             <div className="flex items-baseline gap-2">
-                                <span className="text-slate-800 text-3xl font-black tracking-tight drop-shadow-sm">142</span>
+                                <span id="dashboard-active-drones" className="text-slate-800 text-3xl font-black tracking-tight drop-shadow-sm">0</span>
                                 <span className="text-slate-500 text-xs font-bold">架次</span>
                             </div>
                         </div>
                         <div className="flex flex-col gap-1.5 group">
                             <span className="text-slate-600 text-[11px] font-bold flex items-center gap-2 tracking-wide uppercase">
-                                <Package size={14} className="text-indigo-600" /> 今日累计配送
+                                <Package size={14} className="text-indigo-600" /> 今日累计起飞
                             </span>
                             <div className="flex items-baseline gap-2">
-                                <span className="text-slate-800 text-3xl font-black tracking-tight drop-shadow-sm">1,894</span>
-                                <span className="text-slate-500 text-xs font-bold">单</span>
+                                <span id="dashboard-cumulative-flights" className="text-slate-800 text-3xl font-black tracking-tight drop-shadow-sm">0</span>
+                                <span className="text-slate-500 text-xs font-bold">架次</span>
                             </div>
                         </div>
                         <div className="flex flex-col gap-1.5 group">
                             <span className="text-slate-600 text-[11px] font-bold flex items-center gap-2 tracking-wide uppercase">
-                                <Activity size={14} className="text-rose-600" /> 当前空域负载
+                                <Activity size={14} className="text-rose-600" /> 当前空域负载率
                             </span>
                             <div className="flex items-center gap-3">
                                 <div className="flex-1 h-2 bg-slate-200/80 rounded-full overflow-hidden shadow-inner border border-slate-300/50">
-                                    <div className="h-full w-[84%] bg-gradient-to-r from-rose-400 to-rose-500 rounded-full shadow-sm"></div>
+                                    <div id="dashboard-airspace-bar" className="h-full w-[0%] bg-gradient-to-r from-rose-400 to-rose-500 rounded-full shadow-sm transition-all duration-300 ease-out"></div>
                                 </div>
-                                <span className="text-slate-800 text-lg font-black drop-shadow-sm">84%</span>
+                                <span id="dashboard-airspace-load" className="text-slate-800 text-lg font-black drop-shadow-sm w-12 text-right">0%</span>
                             </div>
                         </div>
                     </div>

@@ -8,10 +8,9 @@ prepare_frontend_data.py — 前端数据预处理脚本
 
 优化策略:
   1. 服务端完成 CSV 解析和分组（不再由浏览器做）
-  2. 确定性采样 20%（基于 flight_id hash，可复现）
-  3. 只保留前端需要的字段: path + timestamps
-  4. 坐标精度裁剪: lon/lat→6位, alt→整数, timestamp→3位
-  5. 时间戳归一化: 相对于全局最小值（避免浮点精度丢失）
+  2. 只保留前端需要的字段: path + timestamps
+  3. 坐标精度裁剪: lon/lat→6位, alt→整数, timestamp→3位
+  4. 时间戳归一化: 相对于全局最小值（避免浮点精度丢失）
 """
 
 import csv
@@ -24,7 +23,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("FrontendDataPrep")
 
 # 采样比例
-SAMPLE_RATIO = 0.20
+SAMPLE_RATIO = 1.0  # 100% data usage
 # 高度放大倍数（与前端 MapContainer.tsx 一致）
 ALT_SCALE = 3
 
@@ -37,8 +36,8 @@ def deterministic_sample(flight_id: str, ratio: float) -> bool:
 
 def main():
     base = Path(__file__).resolve().parent.parent
-    input_csv = base / "data" / "processed" / "uav_trajectories.csv"
-    output_json = base / "frontend" / "public" / "data" / "uav_trajectories.json"
+    input_csv = base / "data" / "processed" / "trajectories" / "uav_trajectories.csv"
+    output_json = base / "frontend" / "public" / "data" / "processed" / "trajectories" / "uav_trajectories.json"
 
     if not input_csv.exists():
         logger.error(f"❌ 输入文件不存在: {input_csv}")
